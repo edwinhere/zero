@@ -4,7 +4,7 @@ extern crate sha2;
 
 use curve25519_dalek::constants;
 use curve25519_dalek::scalar::Scalar;
-use rand_core::OsRng;
+use rand_core::{OsRng, RngCore};
 use sha2::{Digest, Sha512};
 
 // use curve25519_dalek::ristretto::CompressedRistretto;
@@ -22,6 +22,7 @@ fn main() {
     eddsa();
     prove_knowledge_of_discreet_logarithm_in_multiple_bases();
     multiple_private_keys_in_one_proof();
+    sag();
     println!("Hello!");
 }
 
@@ -348,7 +349,7 @@ fn multiple_private_keys_in_one_proof() {
         .map(|(i, k)| _as[i] - (c * k))
         .collect();
 
-    //Verifier has a public key
+    // Verification
     let mut verifiers_hash = Sha512::new();
 
     for j_point in base_points {
@@ -367,4 +368,91 @@ fn multiple_private_keys_in_one_proof() {
     let c_another_way: Scalar = Scalar::from_hash(verifiers_hash);
 
     assert_eq!(c, c_another_way);
+}
+
+// non-linkable, spontaneous, anonymous, group signatures
+fn sag() {
+    let mut csprng = OsRng;
+
+    // Provers private key
+    let k: Scalar = Scalar::random(&mut csprng);
+
+    // Provers public key
+    let k_point: RistrettoPoint = k * constants::RISTRETTO_BASEPOINT_POINT;
+
+    // Ring size (at least 4 but maximum 32)
+    let n = (OsRng.next_u32() % 29 + 4) as u32;
+
+    // Simulate randomly chosen Public keys (Prover will insert her public key here later)
+    let mut public_keys: Vec<RistrettoPoint> =
+        (0..(n - 1)) // Prover is going to add our key into this mix
+            .map(|_| RistrettoPoint::random(&mut csprng))
+            .collect();
+
+    // This is the index where we hide our key
+    let secret_index = (OsRng.next_u32() % n) as usize;
+
+    public_keys.insert(secret_index, k_point);
+
+    let n = public_keys.len();
+
+    let a: Scalar = Scalar::random(&mut csprng);
+
+    let mut rs: Vec<Scalar> = (0..n).map(|_| Scalar::random(&mut csprng)).collect();
+
+    let mut cs: Vec<Scalar> = (0..n).map(|_| Scalar::zero()).collect();
+
+    // Hash of ring and message is shared by all challenges H_n(R, m, ....)
+    let mut group_and_message_hash = Sha512::new();
+
+    for k_point in &public_keys {
+        group_and_message_hash.input(k_point.compress().as_bytes());
+    }
+
+    group_and_message_hash.input("This is the message the prover wants to sign");
+
+    let mut hashes: Vec<Sha512> = (0..n).map(|_| group_and_message_hash.clone()).collect();
+
+    hashes[(secret_index + 1) % n].input(
+        (a * constants::RISTRETTO_BASEPOINT_POINT)
+            .compress()
+            .as_bytes(),
+    );
+    cs[(secret_index + 1) % n] = Scalar::from_hash(hashes[secret_index + 1].clone());
+
+    let mut i = (secret_index + 1) % n;
+
+    loop {
+        hashes[(i + 1) % n].input(
+            ((rs[i % n] * constants::RISTRETTO_BASEPOINT_POINT) + (cs[i % n] * public_keys[i % n]))
+                .compress()
+                .as_bytes(),
+        );
+        cs[(i + 1) % n] = Scalar::from_hash(hashes[(i + 1) % n].clone());
+
+        if secret_index >= 1 && i % n == (secret_index - 1) % n {
+            break;
+        } else if secret_index == 0 && i % n == n - 1 {
+            break;
+        } else {
+            i = (i + 1) % n;
+        }
+    }
+
+    rs[secret_index] = a - (cs[secret_index] * k);
+
+    //Verification
+
+    let mut reconstructed_c: Scalar = cs[0];
+    for j in 0..n {
+        let mut h: Sha512 = group_and_message_hash.clone();
+        h.input(
+            ((rs[j] * constants::RISTRETTO_BASEPOINT_POINT) + (reconstructed_c * public_keys[j]))
+                .compress()
+                .as_bytes(),
+        );
+        reconstructed_c = Scalar::from_hash(h);
+    }
+
+    assert_eq!(cs[0], reconstructed_c);
 }
