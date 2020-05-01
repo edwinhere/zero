@@ -417,7 +417,7 @@ fn sag() {
             .compress()
             .as_bytes(),
     );
-    cs[(secret_index + 1) % n] = Scalar::from_hash(hashes[secret_index + 1].clone());
+    cs[(secret_index + 1) % n] = Scalar::from_hash(hashes[(secret_index + 1) % n].clone());
 
     let mut i = (secret_index + 1) % n;
 
@@ -501,7 +501,7 @@ fn blsag() {
             .as_bytes(),
     );
     hashes[(secret_index + 1) % n].input((a * key_image).compress().as_bytes());
-    cs[(secret_index + 1) % n] = Scalar::from_hash(hashes[secret_index + 1].clone());
+    cs[(secret_index + 1) % n] = Scalar::from_hash(hashes[(secret_index + 1) % n].clone());
 
     let mut i = (secret_index + 1) % n;
 
