@@ -500,7 +500,11 @@ fn blsag() {
             .compress()
             .as_bytes(),
     );
-    hashes[(secret_index + 1) % n].input((a * key_image).compress().as_bytes());
+    hashes[(secret_index + 1) % n].input(
+        (a * RistrettoPoint::from_hash(Sha512::new().chain(k_point.compress().as_bytes())))
+            .compress()
+            .as_bytes(),
+    );
     cs[(secret_index + 1) % n] = Scalar::from_hash(hashes[(secret_index + 1) % n].clone());
 
     let mut i = (secret_index + 1) % n;
@@ -512,10 +516,10 @@ fn blsag() {
                 .as_bytes(),
         );
         hashes[(i + 1) % n].input(
-            (rs[i % n]
+            ((rs[i % n]
                 * RistrettoPoint::from_hash(
                     Sha512::new().chain(public_keys[i % n].compress().as_bytes()),
-                )
+                ))
                 + (cs[i % n] * key_image))
                 .compress()
                 .as_bytes(),
@@ -549,7 +553,7 @@ fn blsag() {
                 * RistrettoPoint::from_hash(
                     Sha512::new().chain(public_keys[j].compress().as_bytes()),
                 )
-                + (cs[j] * key_image))
+                + (reconstructed_c * key_image))
                 .compress()
                 .as_bytes(),
         );
