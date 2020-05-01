@@ -6,7 +6,6 @@ use curve25519_dalek::constants;
 use curve25519_dalek::scalar::Scalar;
 use rand_core::OsRng;
 use sha2::{Digest, Sha512};
-use std::borrow::Borrow;
 
 // use curve25519_dalek::ristretto::CompressedRistretto;
 // use curve25519_dalek::ristretto::RistrettoBasepointTable;
@@ -21,6 +20,8 @@ fn main() {
     fiat_shamir_schnorr();
     alternative_schnorr();
     eddsa();
+    prove_knowledge_of_discreet_logarithm_in_multiple_bases();
+    multiple_private_keys_in_one_proof();
     println!("Hello!");
 }
 
@@ -264,13 +265,106 @@ fn prove_knowledge_of_discreet_logarithm_in_multiple_bases() {
     let a_points: &Vec<RistrettoPoint> =
         &base_points.into_iter().map(|j_point| a * j_point).collect();
 
-    let h_n = &mut Sha512::new();
+    let mut hash = Sha512::new();
 
-    &base_points.into_iter().map(|j_point| {
-        h_n.chain(j_point.compress().as_bytes());
-    });
+    for j_point in base_points {
+        hash.input(j_point.compress().as_bytes());
+    }
 
-    &public_keys.into_iter().map(|k_point| {
-        h_n.chain(k_point.compress().as_bytes());
-    });
+    for k_point in public_keys {
+        hash.input(k_point.compress().as_bytes());
+    }
+
+    for a_point in a_points {
+        hash.input(a_point.compress().as_bytes());
+    }
+
+    let c: Scalar = Scalar::from_hash(hash);
+    let r: Scalar = a - (c * k);
+
+    //Verifier has a public key
+    let mut verifiers_hash = Sha512::new();
+
+    for j_point in base_points {
+        verifiers_hash.input(j_point.compress().as_bytes());
+    }
+
+    for k_point in public_keys {
+        verifiers_hash.input(k_point.compress().as_bytes());
+    }
+
+    for (i, j_point) in base_points.into_iter().enumerate() {
+        let point: RistrettoPoint = (r * j_point) + (c * public_keys[i]);
+        verifiers_hash.input(point.compress().as_bytes());
+    }
+
+    let c_another_way: Scalar = Scalar::from_hash(verifiers_hash);
+
+    assert_eq!(c, c_another_way);
+}
+
+fn multiple_private_keys_in_one_proof() {
+    let mut csprng = OsRng;
+
+    //Prover has many private keys
+    let ks: &Vec<Scalar> = &(0..32).map(|_| Scalar::random(&mut csprng)).collect();
+
+    let base_points: &Vec<RistrettoPoint> = &(0..32)
+        .map(|_| RistrettoPoint::random(&mut csprng))
+        .collect();
+
+    let public_keys: &Vec<RistrettoPoint> = &base_points
+        .into_iter()
+        .enumerate()
+        .map(|(i, j_point)| ks[i] * j_point)
+        .collect();
+
+    let _as: &Vec<Scalar> = &(0..32).map(|_| Scalar::random(&mut csprng)).collect();
+
+    let a_points: &Vec<RistrettoPoint> = &base_points
+        .into_iter()
+        .enumerate()
+        .map(|(i, j_point)| _as[i] * j_point)
+        .collect();
+
+    let mut hash = Sha512::new();
+
+    for j_point in base_points {
+        hash.input(j_point.compress().as_bytes());
+    }
+
+    for k_point in public_keys {
+        hash.input(k_point.compress().as_bytes());
+    }
+
+    for a_point in a_points {
+        hash.input(a_point.compress().as_bytes());
+    }
+
+    let c: Scalar = Scalar::from_hash(hash);
+    let rs: &Vec<Scalar> = &ks
+        .into_iter()
+        .enumerate()
+        .map(|(i, k)| _as[i] - (c * k))
+        .collect();
+
+    //Verifier has a public key
+    let mut verifiers_hash = Sha512::new();
+
+    for j_point in base_points {
+        verifiers_hash.input(j_point.compress().as_bytes());
+    }
+
+    for k_point in public_keys {
+        verifiers_hash.input(k_point.compress().as_bytes());
+    }
+
+    for (i, j_point) in base_points.into_iter().enumerate() {
+        let point: RistrettoPoint = (rs[i] * j_point) + (c * public_keys[i]);
+        verifiers_hash.input(point.compress().as_bytes());
+    }
+
+    let c_another_way: Scalar = Scalar::from_hash(verifiers_hash);
+
+    assert_eq!(c, c_another_way);
 }
