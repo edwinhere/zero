@@ -796,7 +796,13 @@ fn clsag() {
 
     let mut hashes: Vec<Sha512> = (0..nr)
         .map(|_| {
-            let mut h: Sha512 = prefixed_hashes[0].clone();
+            let mut h: Sha512 = Sha512::new();
+            h.input(format!("CSLAG_c"));
+            for i in 0..nr {
+                for j in 0..nc {
+                    h.input(public_keys[i][j].compress().as_bytes());
+                }
+            }
             h.input("This is the message the prover wants to sign");
             return h;
         })
@@ -844,7 +850,13 @@ fn clsag() {
     //Verification
     let mut reconstructed_c: Scalar = cs[0];
     for _i in 0..nr {
-        let mut h: Sha512 = prefixed_hashes[0].clone();
+        let mut h: Sha512 = Sha512::new();
+        h.input(format!("CSLAG_c"));
+        for i in 0..nr {
+            for j in 0..nc {
+                h.input(public_keys[i][j].compress().as_bytes());
+            }
+        }
         h.input("This is the message the prover wants to sign");
         h.input(
             ((rs[_i] * constants::RISTRETTO_BASEPOINT_POINT)
