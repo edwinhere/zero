@@ -716,10 +716,10 @@ fn clsag() {
 
     // This is the base key
     // i.e. the first public key for which the prover has the private key
-    let base_key: RistrettoPoint =
+    let base_key_hashed_to_point: RistrettoPoint =
         RistrettoPoint::from_hash(Sha512::new().chain(k_points[0].compress().as_bytes()));
 
-    let key_images: Vec<RistrettoPoint> = ks.iter().map(|k| k * base_key).collect();
+    let key_images: Vec<RistrettoPoint> = ks.iter().map(|k| k * base_key_hashed_to_point).collect();
 
     // Simulate randomly chosen Public keys (Prover will insert her public keys here later)
     let mut public_keys: Vec<Vec<RistrettoPoint>> = (0..(nr - 1)) // Prover is going to add her key into this mix
@@ -777,9 +777,9 @@ fn clsag() {
 
     let aggregate_public_keys: Vec<RistrettoPoint> = (0..nr)
         .map(|i| {
-            let h: Sha512 = prefixed_hashes_with_key_images[i].clone();
             return (0..nc)
                 .map(|j| {
+                    let h: Sha512 = prefixed_hashes_with_key_images[j].clone();
                     return Scalar::from_hash(h.clone()) * public_keys[i][j];
                 })
                 .sum();
@@ -806,7 +806,7 @@ fn clsag() {
             .compress()
             .as_bytes(),
     );
-    hashes[(secret_index + 1) % nr].input((a * base_key).compress().as_bytes());
+    hashes[(secret_index + 1) % nr].input((a * base_key_hashed_to_point).compress().as_bytes());
     cs[(secret_index + 1) % nr] = Scalar::from_hash(hashes[(secret_index + 1) % nr].clone());
 
     let mut i = (secret_index + 1) % nr;
