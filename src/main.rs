@@ -906,4 +906,13 @@ fn one_time_addresses() {
             * constants::RISTRETTO_BASEPOINT_POINT);
 
     assert_eq!(spend_pub, reconstructed_spend_pub);
+
+    // Bob signs with this private key to prove ownership of the one-time-address.
+    let one_time_private_key =
+        Scalar::from_hash(Sha512::new().chain((view * r_point).compress().as_bytes())) + spend;
+
+    assert_eq!(
+        one_time_private_key * constants::RISTRETTO_BASEPOINT_POINT,
+        one_time_address
+    );
 }
