@@ -22,6 +22,7 @@ fn main() {
     blsag();
     mlsag();
     clsag();
+    one_time_addresses();
     println!("Hello!");
 }
 
@@ -865,4 +866,32 @@ fn clsag() {
     }
 
     assert_eq!(cs[0], reconstructed_c);
+}
+
+fn one_time_addresses() {
+    let mut csprng = OsRng;
+
+    // Bob's Private keys
+    let view: Scalar = Scalar::random(&mut csprng);
+    let spend: Scalar = Scalar::random(&mut csprng);
+
+    // Bob's Public keys
+    let view_pub: RistrettoPoint = view * constants::RISTRETTO_BASEPOINT_POINT;
+    let spend_pub: RistrettoPoint = spend * constants::RISTRETTO_BASEPOINT_POINT;
+
+    let r: Scalar = Scalar::random(&mut csprng);
+    let r_point: RistrettoPoint = r * constants::RISTRETTO_BASEPOINT_POINT;
+
+    // Alice uses this one time address to send money to Bob
+    let one_time_address: RistrettoPoint =
+        (Scalar::from_hash(Sha512::new().chain((r * view_pub).compress().as_bytes()))
+            * constants::RISTRETTO_BASEPOINT_POINT)
+            + spend_pub;
+
+    // Bob reconstructs the spend public key to be sure this address belongs to him
+    let reconstructed_spend_pub: RistrettoPoint = one_time_address
+        - (Scalar::from_hash(Sha512::new().chain((view * r_point).compress().as_bytes()))
+            * constants::RISTRETTO_BASEPOINT_POINT);
+
+    assert_eq!(spend_pub, reconstructed_spend_pub);
 }
