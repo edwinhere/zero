@@ -3,14 +3,10 @@ extern crate rand_core;
 extern crate sha2;
 
 use curve25519_dalek::constants;
+use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
 use rand_core::{OsRng, RngCore};
 use sha2::{Digest, Sha512};
-
-// use curve25519_dalek::ristretto::CompressedRistretto;
-// use curve25519_dalek::ristretto::RistrettoBasepointTable;
-use curve25519_dalek::ristretto::RistrettoPoint;
-// use curve25519_dalek::ristretto::VartimeRistrettoPrecomputation;
 
 fn main() {
     basic();
@@ -25,6 +21,7 @@ fn main() {
     sag();
     blsag();
     mlsag();
+    clsag();
     println!("Hello!");
 }
 
@@ -693,6 +690,177 @@ fn mlsag() {
                     .as_bytes(),
             );
         }
+        reconstructed_c = Scalar::from_hash(h);
+    }
+
+    assert_eq!(cs[0], reconstructed_c);
+}
+
+// Concise Linkable Spontaneous Anonymous Group (CLSAG) signatures
+fn clsag() {
+    let mut csprng = OsRng;
+
+    // Row count of matrix (minimum 4 maximum 32)
+    let nr = (OsRng.next_u32() % 29 + 4) as usize;
+    // Column count of matrix (minimum 4 maximum 32)
+    let nc = (OsRng.next_u32() % 29 + 4) as usize;
+
+    //Provers private keys
+    let ks: Vec<Scalar> = (0..nc).map(|_| Scalar::random(&mut csprng)).collect();
+
+    //Provers public keys
+    let k_points: Vec<RistrettoPoint> = ks
+        .iter()
+        .map(|k| k * constants::RISTRETTO_BASEPOINT_POINT)
+        .collect();
+
+    // This is the base key
+    // i.e. the first public key for which the prover has the private key
+    let base_key: RistrettoPoint =
+        RistrettoPoint::from_hash(Sha512::new().chain(k_points[0].compress().as_bytes()));
+
+    let key_images: Vec<RistrettoPoint> = ks.iter().map(|k| k * base_key).collect();
+
+    // Simulate randomly chosen Public keys (Prover will insert her public keys here later)
+    let mut public_keys: Vec<Vec<RistrettoPoint>> = (0..(nr - 1)) // Prover is going to add her key into this mix
+        .map(|_| {
+            (0..nc)
+                .map(|_| RistrettoPoint::random(&mut csprng))
+                .collect()
+        })
+        .collect();
+
+    // This is the index where we hide our keys
+    let secret_index = (OsRng.next_u32() % nr as u32) as usize;
+
+    public_keys.insert(secret_index, k_points.clone());
+
+    let a: Scalar = Scalar::random(&mut csprng);
+
+    let mut rs: Vec<Scalar> = (0..nr).map(|_| Scalar::random(&mut csprng)).collect();
+
+    let mut cs: Vec<Scalar> = (0..nr).map(|_| Scalar::zero()).collect();
+
+    // Domain separated hashes as required by CSLAG paper
+    // The hash functions have a label, and the ring members fed into it
+    let prefixed_hashes: Vec<Sha512> = (0..nc)
+        .map(|index| {
+            let mut h: Sha512 = Sha512::new();
+            h.input(format!("CSLAG_{}", index));
+            for i in 0..nr {
+                for j in 0..nc {
+                    h.input(public_keys[i][j].compress().as_bytes());
+                }
+            }
+            return h;
+        })
+        .collect();
+
+    // These prefixed hash functions have a label,
+    // and the ring members, and key images fed into it
+    let prefixed_hashes_with_key_images: Vec<Sha512> = (0..nc)
+        .map(|index| {
+            let mut h: Sha512 = prefixed_hashes[index].clone();
+            for j in 0..nc {
+                h.input(key_images[j].compress().as_bytes());
+            }
+            return h;
+        })
+        .collect();
+
+    let aggregate_private_key: Scalar = (0..nc)
+        .map(|j| {
+            let h: Sha512 = prefixed_hashes_with_key_images[j].clone();
+            return Scalar::from_hash(h) * ks[j];
+        })
+        .sum();
+
+    let aggregate_public_keys: Vec<RistrettoPoint> = (0..nr)
+        .map(|i| {
+            let h: Sha512 = prefixed_hashes_with_key_images[i].clone();
+            return (0..nc)
+                .map(|j| {
+                    return Scalar::from_hash(h.clone()) * public_keys[i][j];
+                })
+                .sum();
+        })
+        .collect();
+
+    let aggregate_key_image: RistrettoPoint = (0..nc)
+        .map(|j| {
+            let h: Sha512 = prefixed_hashes_with_key_images[j].clone();
+            return Scalar::from_hash(h.clone()) * key_images[j];
+        })
+        .sum();
+
+    let mut hashes: Vec<Sha512> = (0..nr)
+        .map(|_| {
+            let mut h: Sha512 = prefixed_hashes[0].clone();
+            h.input("This is the message the prover wants to sign");
+            return h;
+        })
+        .collect();
+
+    hashes[(secret_index + 1) % nr].input(
+        (a * constants::RISTRETTO_BASEPOINT_POINT)
+            .compress()
+            .as_bytes(),
+    );
+    hashes[(secret_index + 1) % nr].input((a * base_key).compress().as_bytes());
+    cs[(secret_index + 1) % nr] = Scalar::from_hash(hashes[(secret_index + 1) % nr].clone());
+
+    let mut i = (secret_index + 1) % nr;
+
+    loop {
+        hashes[(i + 1) % nr].input(
+            ((rs[i % nr] * constants::RISTRETTO_BASEPOINT_POINT)
+                + (cs[i % nr] * aggregate_public_keys[i % nr]))
+                .compress()
+                .as_bytes(),
+        );
+        hashes[(i + 1) % nr].input(
+            ((rs[i % nr]
+                * RistrettoPoint::from_hash(
+                    Sha512::new().chain(public_keys[i % nr][0].compress().as_bytes()),
+                ))
+                + (cs[i % nr] * aggregate_key_image))
+                .compress()
+                .as_bytes(),
+        );
+        cs[(i + 1) % nr] = Scalar::from_hash(hashes[(i + 1) % nr].clone());
+
+        if secret_index >= 1 && i % nr == (secret_index - 1) % nr {
+            break;
+        } else if secret_index == 0 && i % nr == nr - 1 {
+            break;
+        } else {
+            i = (i + 1) % nr;
+        }
+    }
+
+    rs[secret_index] = a - (cs[secret_index] * aggregate_private_key);
+
+    //Verification
+    let mut reconstructed_c: Scalar = cs[0];
+    for _i in 0..nr {
+        let mut h: Sha512 = prefixed_hashes[0].clone();
+        h.input("This is the message the prover wants to sign");
+        h.input(
+            ((rs[_i] * constants::RISTRETTO_BASEPOINT_POINT)
+                + (reconstructed_c * aggregate_public_keys[_i]))
+                .compress()
+                .as_bytes(),
+        );
+
+        h.input(
+            (rs[_i]
+                * RistrettoPoint::from_hash(
+                    Sha512::new().chain(public_keys[_i][0].compress().as_bytes()),
+                )
+                + (reconstructed_c * aggregate_key_image))
+                .compress()
+                .as_bytes(),
+        );
         reconstructed_c = Scalar::from_hash(h);
     }
 
