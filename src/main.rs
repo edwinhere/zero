@@ -945,6 +945,7 @@ fn one_time_addresses() {
         assert_eq!(spend_pub, reconstructed);
     }
 
+    // Subaddresses
     let sub_addresses: Vec<(RistrettoPoint, RistrettoPoint)> = (0..10)
         .map(|i| {
             let spend_pub_i: RistrettoPoint = spend_pub
@@ -960,7 +961,8 @@ fn one_time_addresses() {
         })
         .collect();
 
-    for (_, (view_pub_i, spend_pub_i)) in sub_addresses.iter().enumerate() {
+    // Sending to Subaddresses
+    for (i, (view_pub_i, spend_pub_i)) in sub_addresses.iter().enumerate() {
         let one_time_pub_i: RistrettoPoint = Scalar::from_hash(
             Sha512::new()
                 .chain((r * view_pub_i).compress().as_bytes())
@@ -976,5 +978,23 @@ fn one_time_addresses() {
             ) * constants::RISTRETTO_BASEPOINT_POINT;
 
         assert_eq!(reconstructed_spend_pub_i, *spend_pub_i);
+
+        let spend_i = spend
+            + Scalar::from_hash(
+                Sha512::new()
+                    .chain(view.as_bytes())
+                    .chain((i as u64).to_be_bytes()),
+            );
+
+        let one_time: Scalar = Scalar::from_hash(
+            Sha512::new()
+                .chain((r * view_pub_i).compress().as_bytes())
+                .chain((0 as u64).to_be_bytes()),
+        ) + spend_i;
+
+        assert_eq!(
+            one_time_pub_i,
+            one_time * constants::RISTRETTO_BASEPOINT_POINT
+        );
     }
 }
