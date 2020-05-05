@@ -915,4 +915,33 @@ fn one_time_addresses() {
         one_time_private_key * constants::RISTRETTO_BASEPOINT_POINT,
         one_time_address
     );
+
+    // Multi-output transactions
+    let many_one_time_addresses: Vec<(Scalar, RistrettoPoint)> = (0..10) // Output indices
+        .map(|t| {
+            let pk: RistrettoPoint = (Scalar::from_hash(
+                Sha512::new()
+                    .chain((r * view_pub).compress().as_bytes())
+                    .chain((t as u64).to_be_bytes()),
+            ) * constants::RISTRETTO_BASEPOINT_POINT)
+                + spend_pub;
+            let sk: Scalar = Scalar::from_hash(
+                Sha512::new()
+                    .chain((view * r_point).compress().as_bytes())
+                    .chain((t as u64).to_be_bytes()),
+            ) + spend;
+
+            return (sk, pk);
+        })
+        .collect();
+
+    for (t, (_, pk)) in many_one_time_addresses.iter().enumerate() {
+        let reconstructed: RistrettoPoint = pk
+            - (Scalar::from_hash(
+                Sha512::new()
+                    .chain((view * r_point).compress().as_bytes())
+                    .chain((t as u64).to_be_bytes()),
+            ) * constants::RISTRETTO_BASEPOINT_POINT);
+        assert_eq!(spend_pub, reconstructed);
+    }
 }
