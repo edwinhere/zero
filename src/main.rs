@@ -944,4 +944,37 @@ fn one_time_addresses() {
             ) * constants::RISTRETTO_BASEPOINT_POINT);
         assert_eq!(spend_pub, reconstructed);
     }
+
+    let sub_addresses: Vec<(RistrettoPoint, RistrettoPoint)> = (0..10)
+        .map(|i| {
+            let spend_pub_i: RistrettoPoint = spend_pub
+                + Scalar::from_hash(
+                    Sha512::new()
+                        .chain(view.as_bytes())
+                        .chain((i as u64).to_be_bytes()),
+                ) * constants::RISTRETTO_BASEPOINT_POINT;
+
+            let view_pub_i: RistrettoPoint = view * spend_pub_i;
+
+            return (view_pub_i, spend_pub_i);
+        })
+        .collect();
+
+    for (_, (view_pub_i, spend_pub_i)) in sub_addresses.iter().enumerate() {
+        let one_time_pub_i: RistrettoPoint = Scalar::from_hash(
+            Sha512::new()
+                .chain((r * view_pub_i).compress().as_bytes())
+                .chain((0 as u64).to_be_bytes()),
+        ) * constants::RISTRETTO_BASEPOINT_POINT
+            + spend_pub_i;
+
+        let reconstructed_spend_pub_i: RistrettoPoint = one_time_pub_i
+            - Scalar::from_hash(
+                Sha512::new()
+                    .chain((r * view_pub_i).compress().as_bytes())
+                    .chain((0 as u64).to_be_bytes()),
+            ) * constants::RISTRETTO_BASEPOINT_POINT;
+
+        assert_eq!(reconstructed_spend_pub_i, *spend_pub_i);
+    }
 }
