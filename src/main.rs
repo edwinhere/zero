@@ -1,10 +1,16 @@
+extern crate arrayvec;
+extern crate bulletproofs;
 extern crate curve25519_dalek;
+extern crate merlin;
 extern crate rand_core;
 extern crate sha2;
 
+use arrayvec::ArrayVec;
+use bulletproofs::{BulletproofGens, PedersenGens, RangeProof};
 use curve25519_dalek::constants;
 use curve25519_dalek::ristretto::RistrettoPoint;
 use curve25519_dalek::scalar::Scalar;
+use merlin::Transcript;
 use rand_core::{OsRng, RngCore};
 use sha2::{Digest, Sha512};
 
@@ -23,6 +29,7 @@ fn main() {
     mlsag();
     clsag();
     one_time_addresses();
+    bulletproofs();
     println!("Hello!");
 }
 
@@ -997,4 +1004,97 @@ fn one_time_addresses() {
             one_time * constants::RISTRETTO_BASEPOINT_POINT
         );
     }
+}
+
+fn bulletproofs() {
+    let mut csprng = OsRng;
+
+    // Bob's Private keys
+    let view: Scalar = Scalar::random(&mut csprng);
+    // let spend: Scalar = Scalar::random(&mut csprng);
+
+    // Bob's Public keys
+    let view_pub: RistrettoPoint = view * constants::RISTRETTO_BASEPOINT_POINT;
+    // let spend_pub: RistrettoPoint = spend * constants::RISTRETTO_BASEPOINT_POINT;
+
+    let r: Scalar = Scalar::random(&mut csprng);
+    // let r_point: RistrettoPoint = r * constants::RISTRETTO_BASEPOINT_POINT;
+
+    // Generators for Pedersen commitments.  These can be selected
+    // independently of the Bulletproofs generators.
+    let pc_gens = PedersenGens::default();
+
+    // Generators for Bulletproofs, valid for proofs up to bitsize 64
+    // and aggregation size up to 1.
+    let bp_gens = BulletproofGens::new(64, 1);
+
+    // A secret value we want to prove lies in the range [0, 2^32)
+    let amount = 1037578891u64;
+
+    let hash_of_dhs = Scalar::from_hash(
+        Sha512::new()
+            .chain((r * view_pub).compress().as_bytes())
+            .chain((0 as u64).to_be_bytes()),
+    );
+
+    // The API takes a blinding factor for the commitment.
+    let blinding = Scalar::from_hash(
+        Sha512::new()
+            .chain("committment_mask")
+            .chain(hash_of_dhs.clone().as_bytes()),
+    );
+
+    let mask: Scalar = Scalar::from_hash(
+        Sha512::new()
+            .chain("amount")
+            .chain(hash_of_dhs.clone().as_bytes()),
+    );
+
+    let mask_bytes: &[u8; 32] = mask.as_bytes();
+
+    let amount_bytes: [u8; 8] = amount.to_be_bytes();
+
+    let hidden_amount: ArrayVec<[u8; 8]> = amount_bytes
+        .iter()
+        .zip(mask_bytes.into_iter())
+        .map(|(x, y)| x ^ y)
+        .collect();
+
+    let revealed_amount: ArrayVec<[u8; 8]> = hidden_amount
+        .iter()
+        .zip(mask_bytes.into_iter())
+        .map(|(x, y)| x ^ y)
+        .collect();
+
+    assert_eq!(
+        amount,
+        u64::from_be_bytes(revealed_amount.into_inner().unwrap())
+    );
+
+    // The proof can be chained to an existing transcript.
+    // Here we create a transcript with a doctest domain separator.
+    let mut prover_transcript = Transcript::new(b"example");
+
+    // Create a 32-bit rangeproof.
+    let (proof, committed_value) = RangeProof::prove_single(
+        &bp_gens,
+        &pc_gens,
+        &mut prover_transcript,
+        amount,
+        &blinding,
+        32,
+    )
+    .expect("A real program could handle errors");
+
+    // Verification requires a transcript with identical initial state:
+    let mut verifier_transcript = Transcript::new(b"example");
+    assert!(proof
+        .verify_single(
+            &bp_gens,
+            &pc_gens,
+            &mut verifier_transcript,
+            &committed_value,
+            32
+        )
+        .is_ok());
 }
