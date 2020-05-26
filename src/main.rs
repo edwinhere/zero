@@ -1107,33 +1107,32 @@ fn dlsag() {
     let k: Scalar = Scalar::random(&mut csprng);
 
     // Provers public key
-    let k_point: RistrettoPoint = k * constants::RISTRETTO_BASEPOINT_POINT;
-
-    // The other channel participant's public key
-    let other_k_point: RistrettoPoint = RistrettoPoint::random(&mut csprng);
+    let k_point: (RistrettoPoint, RistrettoPoint) = (
+        k * constants::RISTRETTO_BASEPOINT_POINT,
+        RistrettoPoint::random(&mut csprng),
+    );
 
     // Scalar based on random bitstring
     let m = Scalar::random(&mut csprng);
 
     let key_image: RistrettoPoint =
-        m * k * RistrettoPoint::from_hash(Sha512::new().chain(other_k_point.compress().as_bytes()));
+        m * k * RistrettoPoint::from_hash(Sha512::new().chain(k_point.1.compress().as_bytes()));
 
     // Ring size (at least 4 but maximum 32)
     let n = (OsRng.next_u32() % 29 + 4) as usize;
 
+    // Scalars based on random bitstrings. m will be inserted here
     let mut ms: Vec<Scalar> = (0..(n - 1)).map(|_| Scalar::random(&mut csprng)).collect();
-    // Simulate randomly chosen Public keys (Prover will insert her public key here later)
-    let mut public_keys: Vec<RistrettoPoint> =
-        (0..(n - 1)) // Prover is going to add her key into this mix
-            .map(|_| RistrettoPoint::random(&mut csprng))
-            .collect();
 
-    // Simulate another set of randomly chosen Public keys (The other channel participants public
-    // key will be inserted here later)
-    let mut other_public_keys: Vec<RistrettoPoint> =
-        (0..(n - 1)) // Prover is going to add her key into this mix
-            .map(|_| RistrettoPoint::random(&mut csprng))
-            .collect();
+    // Simulate randomly chosen Public keys (Prover will insert her public key here later)
+    let mut public_keys: Vec<(RistrettoPoint, RistrettoPoint)> = (0..(n - 1)) // Prover is going to add her key into this mix
+        .map(|_| {
+            (
+                RistrettoPoint::random(&mut csprng),
+                RistrettoPoint::random(&mut csprng),
+            )
+        })
+        .collect();
 
     // This is the index where the prover hides key
     let secret_index = (OsRng.next_u32() % n as u32) as usize;
@@ -1141,8 +1140,6 @@ fn dlsag() {
     ms.insert(secret_index, m);
 
     public_keys.insert(secret_index, k_point);
-
-    other_public_keys.insert(secret_index, other_k_point);
 
     let a: Scalar = Scalar::random(&mut csprng);
 
@@ -1164,7 +1161,7 @@ fn dlsag() {
     );
     hashes[(secret_index + 1) % n].input(
         (a * ms[secret_index]
-            * RistrettoPoint::from_hash(Sha512::new().chain(other_k_point.compress().as_bytes())))
+            * RistrettoPoint::from_hash(Sha512::new().chain(k_point.1.compress().as_bytes())))
         .compress()
         .as_bytes(),
     );
@@ -1174,7 +1171,8 @@ fn dlsag() {
 
     loop {
         hashes[(i + 1) % n].input(
-            ((rs[i % n] * constants::RISTRETTO_BASEPOINT_POINT) + (cs[i % n] * public_keys[i % n]))
+            ((rs[i % n] * constants::RISTRETTO_BASEPOINT_POINT)
+                + (cs[i % n] * public_keys[i % n].0))
                 .compress()
                 .as_bytes(),
         );
@@ -1182,7 +1180,7 @@ fn dlsag() {
             ((rs[i % n]
                 * ms[i % n]
                 * RistrettoPoint::from_hash(
-                    Sha512::new().chain(other_public_keys[i % n].compress().as_bytes()),
+                    Sha512::new().chain(public_keys[i % n].1.compress().as_bytes()),
                 ))
                 + (cs[i % n] * key_image))
                 .compress()
@@ -1207,7 +1205,7 @@ fn dlsag() {
     for j in 0..n {
         let mut h: Sha512 = message_hash.clone();
         h.input(
-            ((rs[j] * constants::RISTRETTO_BASEPOINT_POINT) + (reconstructed_c * public_keys[j]))
+            ((rs[j] * constants::RISTRETTO_BASEPOINT_POINT) + (reconstructed_c * public_keys[j].0))
                 .compress()
                 .as_bytes(),
         );
@@ -1216,7 +1214,7 @@ fn dlsag() {
             (rs[j]
                 * ms[j]
                 * RistrettoPoint::from_hash(
-                    Sha512::new().chain(other_public_keys[j].compress().as_bytes()),
+                    Sha512::new().chain(public_keys[j].1.compress().as_bytes()),
                 )
                 + (reconstructed_c * key_image))
                 .compress()
